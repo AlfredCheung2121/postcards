@@ -1,0 +1,116 @@
+---
+title: "Voting and Postcards"
+format: html
+Author: Alfred Cheung
+
+execute: 
+  echo: false
+---
+
+
+```{r}
+#| message: false
+library(tidyverse)
+library(primer.data)
+library(tidymodels)
+library(broom)
+```
+
+Sending postcards to registered voters is a traditional element of US campaigns. For this analysis, we use data from a 2006 field experiment in Michigan to inform strategies for increasing turnout in the current Texas gubernatorial election. However, we recognize that Michigan may differ from Texas and the broader US.
+
+
+
+$$P(Y = 1) = \frac{1}{1 + e^{-(\beta_0 + \beta_1 X_1 + \beta_2 X_2 + \cdots + \beta_n X_n)}}$$
+
+with $Y \sim \text{Bernoulli}(\rho)$ where $\rho$ is the probability above.
+
+To estimate likely effects, we fit a logistic regression model predicting voter turnout as a function of postcard treatment, voter engagement (including interaction effects), sex, and age. This structure helps us isolate the impact of different mailings on various types of voters.
+
+
+
+```{r}
+logistic_reg(engine = "glm")|>
+  fit(factor(primary_06) ~ treatment, data = shaming)|>
+  tidy(conf.int = TRUE)
+```
+
+
+
+```{r}
+#| cache: true
+
+x <- shaming |> 
+  mutate(civ_engage = primary_00 + primary_02 + primary_04 + 
+               general_00 + general_02 + general_04) |> 
+  select(primary_06, treatment, sex, age, civ_engage) |> 
+  mutate(voter_class = factor(
+    case_when(
+      civ_engage %in% c(5, 6) ~ "Always Vote",
+      civ_engage %in% c(3, 4) ~ "Sometimes Vote",
+      civ_engage %in% c(1, 2) ~ "Rarely Vote"),
+         levels = c("Rarely Vote", 
+                    "Sometimes Vote", 
+                    "Always Vote"))) |>
+  mutate(voted = as.factor(primary_06))
+
+fit_vote <- logistic_reg(engine = "glm") |>
+  fit(voted ~ age + sex + treatment * voter_class, data = x)
+```
+
+Our model suggests that the “Neighbors” postcard yields the largest turnout increase, especially among infrequent voters. For rarely voting individuals, this intervention raised the probability of voting by as much as 68 percentage points, a substantial impact relative to other treatments.
+
+```{r}
+library(marginaleffects)
+```
+
+
+```{r}
+
+library(ggplot2)
+
+
+
+preds <- plot_predictions(fit_vote, type = "prob", condition = c("treatment", "voter_class"), draw = FALSE)
+
+
+ggplot(preds, aes(x = treatment, y = estimate, color = voter_class, group = voter_class)) +
+  geom_point(position = position_dodge(width = 0.5), size = 3) +
+  geom_line(position = position_dodge(width = 0.5), size = 1) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2, position = position_dodge(width = 0.5)) +
+  labs(
+    title = "Predicted Probability of Voting by Treatment and Voter Class",
+    x = "Treatment",
+    y = "Predicted Probability of Voting",
+    color = "Voter Class"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+
+```
+
+
+
+```{r}
+ggplot(preds, aes(x = treatment, y = estimate)) +
+  geom_point(size = 3, color = "#2C3E50") +
+  geom_line(group = 1, color = "#2980B9", size = 1) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  facet_wrap(~ voter_class) +
+  labs(
+    title = "Predicted Probability of Voting by Treatment",
+    subtitle = "Faceted by Voter Class",
+    x = "Treatment",
+    y = "Predicted Probability"
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  theme_light(base_size = 13) +
+  theme(strip.text = element_text(face = "bold"))
+
+```
+
+While the results indicate strong effects, our estimates rest on assumptions—most notably, that the Michigan sample is representative and that the model is correctly specified. Real-world outcomes in Texas may differ, and actual effects could be smaller if these assumptions do not hold.
